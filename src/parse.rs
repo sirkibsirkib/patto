@@ -28,26 +28,53 @@ where
 
 pub fn parenthesized<'a, F, O, E>(inner: F) -> impl FnMut(&'a [u8]) -> IResult<&'a [u8], O, E>
 where
-    E: ParseError<&'a [u8]>,
+    E: ParseError<&'a [u8]> + 'a,
     F: FnMut(&'a [u8]) -> IResult<&'a [u8], O, E> + 'a,
 {
-    delimited(tag("("), inner, tag(")"))
+    delimited(wsl(tag("(")), inner, wsl(tag(")")))
 }
 
 pub fn constant(s: &[u8]) -> IResult<&[u8], Constant> {
-    nommap(nom::character::complete::u16, Constant)(s)
+    nommap(wsl(nom::character::complete::u16), Constant)(s)
+}
+pub fn variable(s: &[u8]) -> IResult<&[u8], Variable> {
+    nommap(preceded(wsl(tag("V")), nom::character::complete::u16), Variable)(s)
 }
 
 pub fn patt(s: &[u8]) -> IResult<&[u8], Patt> {
     alt((
         nommap(many_m_n(2, usize::MAX, patt), Patt::Tuple),
-        nommap(tag("_"), |_| Patt::Wildcard),
+        nommap(wsl(tag("_")), |_| Patt::Wildcard),
         nommap(constant, Patt::Constant),
         parenthesized(patt),
     ))(s)
 }
+
+pub fn patt_stmt(s: &[u8]) -> IResult<&[u8], Patt> {
+    preceded(wsl(tag("::")), patt)(s)
+}
+
+pub fn rule_atom(s: &[u8]) -> IResult<&[u8], RuleAtom> {
+    alt((
+        nommap(many_m_n(2, usize::MAX, rule_atom), RuleAtom::Tuple),
+        nommap(variable, RuleAtom::Variable),
+        nommap(constant, RuleAtom::Constant),
+        parenthesized(rule_atom),
+    ))(s)
+}
+
 pub fn rule(s: &[u8]) -> IResult<&[u8], Rule> {
-    todo!()
+    struct Literal {
+        sign: bool,
+        ra: RuleAtom,
+    }
+    let head = separated_list0(wsl(tag("+"), rule_atom));
+    let body = 
+    let (head, body) = tuple((head, body))(s)?;
+    let [mut body_pos, mut body_neg] = [vec![], vec![]];
+    Rule {
+        head, body_pos, body_neg
+    }
 }
 
 pub fn program(s: &[u8]) -> IResult<&[u8], Program> {
@@ -55,7 +82,7 @@ pub fn program(s: &[u8]) -> IResult<&[u8], Program> {
         Rule(Rule),
         Patt(Patt),
     }
-    let p = nommap(patt, PattOrRule::Patt);
+    let p = nommap(patt_stmt, PattOrRule::Patt);
     let r = nommap(rule, PattOrRule::Rule);
     let (i, rules_or_patts) = many0(alt((p, r)))(s)?;
     let mut program = Program::default();
