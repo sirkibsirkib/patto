@@ -13,7 +13,7 @@ pub enum RuleAtom {
     Variable(Variable),
     Tuple(Vec<RuleAtom>),
 }
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub enum Patt {
     Wildcard,
     Constant(Constant),
@@ -26,6 +26,7 @@ pub struct Rule {
     pub body_neg: Vec<RuleAtom>,
 }
 
+#[derive(Default, Debug)]
 pub struct Program {
     pub rules: Vec<Rule>,
     pub patts: Vec<Patt>,
@@ -118,6 +119,24 @@ impl fmt::Debug for Rule {
     }
 }
 
+impl fmt::Debug for Patt {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Constant(c) => write!(f, "{}", c.0),
+            Self::Wildcard => write!(f, "_"),
+            Self::Tuple(args) => {
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, " ")?;
+                    }
+                    if arg.is_tuple() { write!(f, "({:?})", arg) } else { arg.fmt(f) }?;
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
 impl fmt::Debug for RuleAtom {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -135,6 +154,16 @@ impl fmt::Debug for RuleAtom {
         }
     }
 }
+
+impl Patt {
+    fn is_tuple(&self) -> bool {
+        match self {
+            Self::Tuple(_) => true,
+            _ => false,
+        }
+    }
+}
+
 impl RuleAtom {
     fn contains_ra(&self, other: &Self) -> bool {
         if self == other {
@@ -170,7 +199,7 @@ impl RuleAtom {
 }
 
 impl Patt {
-    fn matching(&self, ra: &RuleAtom) -> bool {
+    pub fn matching(&self, ra: &RuleAtom) -> bool {
         match (self, ra) {
             (Self::Wildcard, _) => true,
             (Self::Constant(x), RuleAtom::Constant(y)) => x == y,
@@ -192,20 +221,17 @@ impl Program {
         let mut construct_patts: Vec<&Patt> = vec![];
         let mut argument_patts: Vec<&Patt> = vec![];
         for rule in &self.rules {
-            let novel = |ra: &RuleAtom| {
-                !ra.is_variable() && !rule.body_pos.iter().any(|body_ra| body_ra.contains_ra(ra))
-            };
+            let novel =
+                |ra: &RuleAtom| !rule.body_pos.iter().any(|body_ra| body_ra.contains_ra(ra));
             consequents.extend(rule.head.as_slice());
             while let Some(c) = consequents.pop() {
-                if c.ground() {
+                if c.ground() || !novel(c) {
                     continue;
                 }
                 construct_patts.clear();
                 argument_patts.clear();
                 if let RuleAtom::Tuple(args) = c {
-                    if novel(c) {
-                        construct_patts.extend(self.patts_matching(c));
-                    }
+                    construct_patts.extend(self.patts_matching(c));
                     if construct_patts.is_empty() {
                         return Err(PattErr::NoMatchingPatt { rule, ra: c });
                     }
