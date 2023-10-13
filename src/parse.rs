@@ -41,40 +41,52 @@ pub fn variable(s: &[u8]) -> IResult<&[u8], Variable> {
     nommap(preceded(wsl(tag("V")), nom::character::complete::u16), Variable)(s)
 }
 
-pub fn patt(s: &[u8]) -> IResult<&[u8], Patt> {
+pub fn patt2(s: &[u8]) -> IResult<&[u8], Patt> {
     alt((
-        nommap(many_m_n(2, usize::MAX, patt), Patt::Tuple),
         nommap(wsl(tag("_")), |_| Patt::Wildcard),
         nommap(constant, Patt::Constant),
         parenthesized(patt),
     ))(s)
 }
-
-pub fn patt_stmt(s: &[u8]) -> IResult<&[u8], Patt> {
-    preceded(wsl(tag("::")), patt)(s)
+pub fn patt(s: &[u8]) -> IResult<&[u8], Patt> {
+    alt((nommap(many_m_n(2, usize::MAX, patt2), Patt::Tuple), patt2))(s)
 }
 
-pub fn rule_atom(s: &[u8]) -> IResult<&[u8], RuleAtom> {
+pub fn patt_stmt(s: &[u8]) -> IResult<&[u8], Patt> {
+    preceded(wsl(tag("@")), patt)(s)
+}
+
+pub fn rule_atom2(s: &[u8]) -> IResult<&[u8], RuleAtom> {
     alt((
-        nommap(many_m_n(2, usize::MAX, rule_atom), RuleAtom::Tuple),
         nommap(variable, RuleAtom::Variable),
         nommap(constant, RuleAtom::Constant),
         parenthesized(rule_atom),
     ))(s)
 }
 
+pub fn rule_atom(s: &[u8]) -> IResult<&[u8], RuleAtom> {
+    alt((nommap(many_m_n(2, usize::MAX, rule_atom2), RuleAtom::Tuple), rule_atom2))(s)
+}
+
+pub fn literal(s: &[u8]) -> IResult<&[u8], (bool, RuleAtom)> {
+    let pos = nommap(wsl(tag("+")), |_| true);
+    let neg = nommap(wsl(tag("-")), |_| false);
+    let sign = nommap(opt(alt((pos, neg))), |x| x.unwrap_or(true));
+    pair(sign, rule_atom)(s)
+}
+
 pub fn rule(s: &[u8]) -> IResult<&[u8], Rule> {
-    struct Literal {
-        sign: bool,
-        ra: RuleAtom,
-    }
-    let head = separated_list0(wsl(tag("+"), rule_atom));
-    let body = 
-    let (head, body) = tuple((head, body))(s)?;
+    let h = separated_list0(wsl(tag("+")), rule_atom);
+    let b = opt(preceded(wsl(tag(":-")), many0(literal)));
+    let (s, (head, body)) = preceded(wsl(tag("$")), pair(h, b))(s)?;
     let [mut body_pos, mut body_neg] = [vec![], vec![]];
-    Rule {
-        head, body_pos, body_neg
+    if let Some(body) = body {
+        for (sign, ra) in body {
+            let vec = if sign { &mut body_pos } else { &mut body_neg };
+            vec.push(ra);
+        }
     }
+    Ok((s, Rule { head, body_pos, body_neg }))
 }
 
 pub fn program(s: &[u8]) -> IResult<&[u8], Program> {

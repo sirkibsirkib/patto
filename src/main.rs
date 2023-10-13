@@ -1,20 +1,19 @@
 mod ir;
 mod parse;
 
-fn main() {
-    let (_, program) = parse::program(b"").expect("OK!");
-    // use ir::*;
-    // use Patt as Pa;
-    // use RuleAtom as Ra;
-    // let patt = Pa::Tuple(vec![Pa::Constant(Constant(2)), Pa::Wildcard]);
-    // let ra = Ra::Tuple(vec![Ra::Constant(Constant(2)), Ra::Variable(Variable(0))]);
-    // println!("{:?}", patt.matching(&ra));
-    // let program = Program {
-    //     patts: vec![patt],
-    //     rules: vec![Rule { head: vec![ra.clone()], body_pos: vec![ra], body_neg: vec![] }],
-    // };
+fn get_source() -> Vec<u8> {
+    let mut stdin = std::io::stdin().lock();
+    let mut buffer = vec![];
+    std::io::Read::read_to_end(&mut stdin, &mut buffer).expect("buffer overflow");
+    buffer
+}
 
-    println!("program {:#?}", &program);
+fn main() -> Result<(), ()> {
+    let source = get_source();
+    let res = parse::program(&source);
+
+    let (_rest, program) = res.map_err(drop)?;
+    println!("PROGRAM {:#?}", &program);
 
     let pg = program.patt_graph();
     println!("PATT GRAPH {:?}", pg);
@@ -26,4 +25,5 @@ fn main() {
         let cycle = r.cycle();
         println!("CYCLE {:?}", cycle);
     }
+    Ok(())
 }
