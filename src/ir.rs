@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::fmt;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct Variable(pub u16);
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct Variable(pub Vec<u8>);
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-pub struct Constant(pub u16);
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct Constant(pub Vec<u8>);
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub enum RuleAtom {
@@ -18,6 +18,12 @@ pub enum Patt {
     Wildcard,
     Constant(Constant),
     Tuple(Vec<Patt>),
+}
+
+#[derive(Debug)]
+pub struct Cycle<'a> {
+    cyclic_patt: &'a Patt,
+    cyclic_step: Vec<(&'a Patt, How<'a>)>,
 }
 
 pub struct Rule {
@@ -34,8 +40,9 @@ pub struct Program {
 
 #[derive(Debug, Clone, Copy)]
 pub struct How<'a> {
-    pub ra: &'a RuleAtom,
     pub rule: &'a Rule,
+    pub consequent: &'a RuleAtom,
+    pub argument: &'a RuleAtom,
 }
 
 #[derive(Debug)]
@@ -79,17 +86,17 @@ impl PattGraph<'_> {
 }
 
 impl Reachability<'_> {
-    pub fn cycle(&self) -> Option<Vec<How>> {
+    pub fn cycle(&self) -> Option<Cycle> {
         for patt in self.patts.iter() {
             if let Some((first, how)) = self.toward.get(&[patt, patt]).copied() {
-                let mut vec = vec![how];
+                let mut cyclic_step = vec![(first, how)];
                 let mut next = first;
                 while next != patt {
                     let (n, how) = self.toward.get(&[patt, patt]).copied().unwrap();
-                    vec.push(how);
+                    cyclic_step.push((n, how));
                     next = n;
                 }
-                return Some(vec);
+                return Some(Cycle { cyclic_patt: patt, cyclic_step });
             }
         }
         None
@@ -122,7 +129,12 @@ impl fmt::Debug for Rule {
 impl fmt::Debug for Patt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Constant(c) => write!(f, "{}", c.0),
+            Self::Constant(c) => {
+                for x in &c.0 {
+                    write!(f, "{}", *x as char)?;
+                }
+                Ok(())
+            }
             Self::Wildcard => write!(f, "_"),
             Self::Tuple(args) => {
                 for (i, arg) in args.iter().enumerate() {
@@ -140,8 +152,16 @@ impl fmt::Debug for Patt {
 impl fmt::Debug for RuleAtom {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Constant(c) => write!(f, "{}", c.0),
-            Self::Variable(v) => write!(f, "V{}", v.0),
+            Self::Constant(c) => {
+                for x in &c.0 {
+                    write!(f, "{}", *x as char)?;
+                }
+            }
+            Self::Variable(v) => {
+                for x in &v.0 {
+                    write!(f, "{}", *x as char)?;
+                }
+            }
             Self::Tuple(args) => {
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
@@ -149,9 +169,9 @@ impl fmt::Debug for RuleAtom {
                     }
                     if arg.is_tuple() { write!(f, "({:?})", arg) } else { arg.fmt(f) }?;
                 }
-                Ok(())
             }
         }
+        Ok(())
     }
 }
 
@@ -201,7 +221,7 @@ impl RuleAtom {
 impl Patt {
     pub fn matching(&self, ra: &RuleAtom) -> bool {
         match (self, ra) {
-            (Self::Wildcard, _) => true,
+            (Self::Wildcard, _) | (_, RuleAtom::Variable(_)) => true,
             (Self::Constant(x), RuleAtom::Constant(y)) => x == y,
             (Self::Tuple(x), RuleAtom::Tuple(y)) => {
                 x.len() == y.len() && x.iter().zip(y.iter()).all(|(a, b)| a.matching(b))
@@ -217,35 +237,32 @@ impl Program {
     }
     pub fn patt_graph(&self) -> Result<PattGraph, PattErr> {
         let mut pg = PattGraph { patts: self.patts.as_slice(), inside: Default::default() };
-        let mut consequents: Vec<&RuleAtom> = vec![];
-        let mut construct_patts: Vec<&Patt> = vec![];
-        let mut argument_patts: Vec<&Patt> = vec![];
         for rule in &self.rules {
-            let novel =
-                |ra: &RuleAtom| !rule.body_pos.iter().any(|body_ra| body_ra.contains_ra(ra));
-            consequents.extend(rule.head.as_slice());
-            while let Some(c) = consequents.pop() {
-                if c.ground() || !novel(c) {
+            println!("RULE {:?}", rule);
+            for c in rule.head.iter() {
+                println!("CONSEQUENT {:?}", c);
+                if c.ground() || rule.body_pos.iter().any(|ra| ra == c) {
                     continue;
                 }
-                construct_patts.clear();
-                argument_patts.clear();
                 if let RuleAtom::Tuple(args) = c {
-                    construct_patts.extend(self.patts_matching(c));
-                    if construct_patts.is_empty() {
+                    if self.patts_matching(c).next().is_none() {
                         return Err(PattErr::NoMatchingPatt { rule, ra: c });
                     }
                     for arg in args {
-                        if !arg.ground() {
-                            argument_patts.extend(self.patts_matching(c));
-                            for &cp in &construct_patts {
-                                for &ap in &argument_patts {
-                                    pg.inside.insert([cp, ap], How { ra: c, rule });
-                                }
+                        println!("ARG {:?}", arg);
+                        if arg.ground() {
+                            continue;
+                        }
+                        if self.patts_matching(arg).next().is_none() {
+                            return Err(PattErr::NoMatchingPatt { rule, ra: arg });
+                        }
+                        for ap in self.patts_matching(arg) {
+                            for cp in self.patts_matching(c) {
+                                pg.inside
+                                    .insert([cp, ap], How { consequent: c, argument: arg, rule });
                             }
                         }
                     }
-                    consequents.extend(args);
                 }
             }
         }

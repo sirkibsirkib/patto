@@ -5,7 +5,7 @@ use nom::{
     character::complete::{char as nomchar, multispace0, satisfy},
     combinator::{map as nommap, opt, recognize, verify},
     error::ParseError,
-    multi::{many0, many_m_n, separated_list0},
+    multi::{many0, many0_count, many_m_n, separated_list0},
     sequence::{delimited, pair, preceded, terminated},
     IResult,
 };
@@ -34,11 +34,27 @@ where
     delimited(wsl(tag("(")), inner, wsl(tag(")")))
 }
 
+pub fn ident_suffix(s: &[u8]) -> IResult<&[u8], &[u8]> {
+    recognize(many0_count(satisfy(|c: char| !c.is_whitespace() && !"(:)@$".contains(c))))(s)
+}
+
 pub fn constant(s: &[u8]) -> IResult<&[u8], Constant> {
-    nommap(wsl(nom::character::complete::u16), Constant)(s)
+    nommap(
+        recognize(wsl(pair(
+            preceded(many0_count(tag("_")), satisfy(char::is_lowercase)),
+            ident_suffix,
+        ))),
+        |s| Constant(s.to_vec()),
+    )(s)
 }
 pub fn variable(s: &[u8]) -> IResult<&[u8], Variable> {
-    nommap(preceded(wsl(tag("V")), nom::character::complete::u16), Variable)(s)
+    nommap(
+        recognize(wsl(pair(
+            preceded(many0_count(tag("_")), satisfy(char::is_uppercase)),
+            ident_suffix,
+        ))),
+        |s| Variable(s.to_vec()),
+    )(s)
 }
 
 pub fn patt2(s: &[u8]) -> IResult<&[u8], Patt> {
@@ -77,7 +93,7 @@ pub fn literal(s: &[u8]) -> IResult<&[u8], (bool, RuleAtom)> {
 
 pub fn rule(s: &[u8]) -> IResult<&[u8], Rule> {
     let h = separated_list0(wsl(tag("+")), rule_atom);
-    let b = opt(preceded(wsl(tag(":-")), many0(literal)));
+    let b = opt(preceded(wsl(tag(":")), many0(literal)));
     let (s, (head, body)) = preceded(wsl(tag("$")), pair(h, b))(s)?;
     let [mut body_pos, mut body_neg] = [vec![], vec![]];
     if let Some(body) = body {

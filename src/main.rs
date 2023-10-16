@@ -12,7 +12,9 @@ fn main() -> Result<(), ()> {
     let source = get_source();
     let res = parse::program(&source);
 
-    let (_rest, program) = res.map_err(drop)?;
+    let (rest, program) = res.map_err(drop)?;
+
+    println!("REMAINING: {:?}", rest);
     println!("PROGRAM {:#?}", &program);
 
     let pg = program.patt_graph();
@@ -23,7 +25,7 @@ fn main() -> Result<(), ()> {
         println!("REACHABILITY {:?}", r);
 
         let cycle = r.cycle();
-        println!("CYCLE {:?}", cycle);
+        println!("CYCLE {:#?}", cycle);
     }
     Ok(())
 }
