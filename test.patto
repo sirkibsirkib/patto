@@ -1,2 +1,15 @@
-@ f _
-$ f (X Y) : X g g
+length of nil is 0
+
+length of (X in L) is M 
+  for length of L is N
+  and N precedes M
+
+0 precedes 1
+1 precedes 2
+2 precedes 3
+3 precedes 4
+
+length of (1 in (2 in (3 in nil)))
+
+---------
+
